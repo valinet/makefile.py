@@ -34,6 +34,7 @@ from textwrap import dedent
 from collections import defaultdict
 from os.path import join as pathjoin
 
+defines = {}
 
 file_types = {}
 def handles(extension, produces=None):
@@ -52,7 +53,51 @@ def handles(extension, produces=None):
 def has_main(contents, regex=re.compile(r'^\s*(?:int|auto)\s+main\s*\((int[^\)]*|\s*)\)', re.MULTILINE)):
     return regex.search(contents) != None
 def get_includes(contents, regex=re.compile(r'^\s*#include\s*"([^"]+)"\s*$', re.MULTILINE)):
-    return regex.findall(contents)
+    include_regex = re.compile(r'^\s*#include\s*"([^"]+)"')
+    lines = contents.splitlines()
+    output_includes = []
+    i = 0
+    n = len(lines)
+    skipping = False  # inside a skipped #if block
+    skip_depth = 0    # nested #if levels while skipping
+    while i < n:
+        line = lines[i].rstrip()
+        if not (line.strip() == "" or
+                line.strip().startswith("//") or
+                line.strip().startswith("#") or
+                line.strip().startswith("/**")):
+            break
+        if line.strip().startswith("//"):
+            i += 1
+            continue
+        if line.strip().startswith("#"):
+            m = re.match(r'^\s*#if\s+defined\(([^)]+)\)', line)
+            if m:
+                symbol = m.group(1)
+                if skipping:
+                    skip_depth += 1
+                else:
+                    if symbol not in defines:
+                        skipping = True
+                        skip_depth = 1
+                i += 1
+                continue
+            if re.match(r'^\s*#endif', line):
+                if skipping:
+                    skip_depth -= 1
+                    if skip_depth == 0:
+                        skipping = False
+                i += 1
+                continue
+            if skipping:
+                i += 1
+                continue
+            inc = include_regex.findall(line)
+            if inc:
+                output_includes.extend(inc)
+        i += 1
+    return output_includes
+#    return regex.findall(contents)
 def get_imports(contents, regex=re.compile(r'^\s*import\s*"([^"]+)"\s*;\s*$', re.MULTILINE)):
     return regex.findall(contents)
 def get_compileargs(contents, regex=re.compile(r'^\s*//\s*@compileargs\s+(.*)\s*$', re.MULTILINE)):
@@ -283,7 +328,6 @@ def find_files(root_dir, extensions):
 
 if __name__ == "__main__":
     conffile = "src/config.h"
-    defines = {}
 
     pattern = re.compile(
         r'^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)'   # macro name
