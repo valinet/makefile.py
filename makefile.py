@@ -28,6 +28,7 @@ import re
 import sys
 import pathlib
 import argparse
+import re
 from enum import Enum
 from textwrap import dedent
 from collections import defaultdict
@@ -48,7 +49,7 @@ def handles(extension, produces=None):
 
 # These regex helpers remain at global scope so that the
 # compiled regex caching is done once per process.
-def has_main(contents, regex=re.compile(r'^\s*int\s+main\s*\((int[^\)]*|\s*)\)', re.MULTILINE)):
+def has_main(contents, regex=re.compile(r'^\s*(?:int|auto)\s+main\s*\((int[^\)]*|\s*)\)', re.MULTILINE)):
     return regex.search(contents) != None
 def get_includes(contents, regex=re.compile(r'^\s*#include\s*"([^"]+)"\s*$', re.MULTILINE)):
     return regex.findall(contents)
@@ -162,8 +163,8 @@ class CCFile(File):
         obj_file = pathjoin(out_dir, self.swap_extension(".o"))
         includes = " ".join([pathjoin(out_dir, f) for f in self.get_compile_dependencies()])
         compileargs = " ".join(self.compileargs)
-        print(f"{obj_file}: {self.fullpath} {includes}")
-        print(f"\t$(CXX) $(CXXFLAGS) $(PB_INCLUDES) {compileargs} -I{src_dir} -I{out_dir} -c $< -o $@")
+        print(f"{obj_file}: {self.fullpath} {includes} gcm.cache/std.gcm gcm.cache/std.compat.gcm gcm.cache/liblinux.gcm gcm.cache/libpthread.gcm gcm.cache/liburing.gcm gcm.cache/libwebsockets.gcm")
+        print(f"\t$(CXX) $(CXXFLAGS) {compileargs} -I{src_dir} -I{out_dir} -c $< -o $@")
         print()
         emitted = Emitted(directories=[os.path.dirname(obj_file)])
         if self.__is_link_target:
@@ -171,7 +172,7 @@ class CCFile(File):
             deps = " ".join([pathjoin(out_dir, x) for x in self.get_link_dependencies()])
             linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
             print(f"{executable}: {deps} {obj_file}")
-            print(f"\t$(CXX) $(CXXFLAGS) -o $@ $^ $(PB_LIBS) {linkargs} -pthread")
+            print(f"\t$(CXX) $(CXXFLAGS) -o $@ $^ {linkargs} -pthread")
             print()
             emitted.executables = [executable]
         return emitted
@@ -218,8 +219,9 @@ class HeaderFile(File):
         src = pathjoin(src_dir, self.dirname, "%.h")
 
         pattern = f"{dst}: {src}\n" \
+                  f"\tmkdir -p {build_dir}\n" \
                   f"\tcp $< $@\n"
-
+        
         return Emitted(directories=[build_dir], patterns=[pattern])
 
 
@@ -230,12 +232,13 @@ class CCHFile(File):
         self.includes = filter(lambda s: not s in self.get_aliases(), get_includes(contents))
         self.compileargs = get_compileargs(contents)
         self.linkargs = get_linkargs(contents)
+        self.__is_link_target = has_main(contents)
 
     def get_aliases(self):
         return [self.filename, self.filename + ".h"]
 
     def emit(self, out_dir):
-        (cc_file, obj_file) = self.get_variants([".cch.cc", ".cch.o"],
+        (cc_file, obj_file, header_file) = self.get_variants([".cch.cc", ".cch.o", ".cch.h"],
                                                 prepend_dir=out_dir)
         includes = " ".join([pathjoin(out_dir, f) for f in self.get_compile_dependencies()])
         compileargs = " ".join(self.compileargs)
@@ -245,42 +248,22 @@ class CCHFile(File):
         src_pattern = pathjoin(src_dir, self.dirname, "%.cch")
         include_path = pathjoin(self.dirname, "%f")
 
-        pattern = f"{output_base}.cc {output_base}.h: {src_pattern}\n" \
-                  f"\t$(CCH) --input $< --include={include_path} --output={build_dir}/%f\n"
+        pattern = f"{output_base}.cc {output_base}.h: {src_pattern} | cch/build/cch\n" \
+                  f"\t$(CCH) --diff --noBanner --input $< --output={build_dir}/%f\n"
 
-        print(f"{obj_file}: {cc_file} {includes}")
-        print(f"\t$(CXX) $(CXXFLAGS) $(PB_INCLUDES) -I{src_dir} -I{out_dir} {compileargs} -c $< -o $@")
+        print(f"{obj_file}: {cc_file} {header_file} {includes} gcm.cache/std.gcm gcm.cache/std.compat.gcm gcm.cache/liblinux.gcm gcm.cache/libpthread.gcm gcm.cache/liburing.gcm gcm.cache/libwebsockets.gcm")
+        print(f"\t$(CXX) $(CXXFLAGS) -I{src_dir} -I{out_dir} {compileargs} -c $< -o $@")
         print()
-        return Emitted(directories=[build_dir], patterns=[pattern])
-
-
-@handles(extension=".proto", produces=[".grpc.pb.o", ".pb.o"])
-class ProtobufFile(File):
-
-    def initialize(self, contents):
-        self.includes = get_imports(contents)
-
-    def get_aliases(self):
-        return [self.filename, self.swap_extension(".pb.h"), self.swap_extension(".grpc.pb.h")]
-
-    def emit(self, out_dir):
-        (grpc_cc, grpc_o) = self.get_variants([".grpc.pb.cc", ".grpc.pb.o"],
-                                              prepend_dir=out_dir)
-        (pb_cc, pb_o) = self.get_variants([".pb.cc", ".pb.o"],
-                                          prepend_dir=out_dir)
-
-        build_dir = pathjoin(out_dir, self.dirname)
-        src = pathjoin(src_dir, self.dirname, "%.proto")
-        variants = " ".join([pathjoin(build_dir, x) for x in ["%.grpc.pb.cc", "%.grpc.pb.h", "%.pb.cc", "%.pb.h"]])
-        pattern = f"{variants}: {src}\n" \
-                  f"\t$(PROTOC) --grpc_out={out_dir} --cpp_out={out_dir} -I{src_dir} $<\n"
-
-        deps = " ".join([pathjoin(out_dir, x) for x in self.get_compile_dependencies()])
-        for (cc_file, obj_file) in [(pb_cc, pb_o), (grpc_cc, grpc_o)]:
-            print(f"{obj_file}: {cc_file} {deps}")
-            print(f"\t$(CXX) $(CXXFLAGS) $(PB_INCLUDES) -I{out_dir} -c $< -o $@")
-        print()
-        return Emitted(directories=[build_dir], patterns=[pattern])
+        emitted = Emitted(directories=[build_dir], patterns=[pattern])
+        if self.__is_link_target:
+            executable = pathjoin(out_dir, self.swap_extension(""))
+            deps = " ".join([pathjoin(out_dir, x) for x in self.get_link_dependencies()])
+            linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
+            print(f"{executable}: {deps} {obj_file} | cch/build/cch")
+            print(f"\t$(CXX) $(CXXFLAGS) -o $@ $^ {linkargs} -pthread")
+            print()
+            emitted.executables = [executable]
+        return emitted
 
 
 def find_files(root_dir, extensions):
@@ -299,41 +282,60 @@ def find_files(root_dir, extensions):
 
 
 if __name__ == "__main__":
+    conffile = "src/config.h"
+    defines = {}
+
+    pattern = re.compile(
+        r'^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)'   # macro name
+        r'(?:\s+(.*?))?'                            # optional value
+        r'\s*(?://.*)?$',                           # optional comment
+        re.MULTILINE
+    )
+
+    with open(conffile) as f:
+        text = f.read()
+
+    for name, value in pattern.findall(text):
+        # Clean value: strip whitespace
+        value = re.sub(r'^(["\'])(.*)\1$', r'\2', value).strip() if value else None
+        defines[name] = value
 
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("src_root", help="Base directory of source tree")
-    parser.add_argument("build_root", help="Base directory of build output")
-    parser.add_argument("--std", default="c++11", help="C++ version")
-    parser.add_argument("--cstd", default="c11", help="C version")
-    parser.add_argument("--optimization", default="2", help="Optimization level (-OX)")
+    #parser.add_argument("src_root", help="Base directory of source tree")
+    #parser.add_argument("build_root", help="Base directory of build output")
+    parser.add_argument("--std", default="c++23", help="C++ version")
+    parser.add_argument("--cstd", default="c23", help="C version")
+    parser.add_argument("--optimization", default="3", help="Optimization level (-OX)")
     parser.add_argument("--debug", action="store_true", help="Debug logging to stderr")
     args = parser.parse_args()
+    args.src_root = "src/"
+    args.build_root = "build"
 
     # Set the two global variables.
-    globals()["debug"] = lambda s: print(f">> {s}", file=sys.stderr) if args.debug else None
+    globals()["debug"] = lambda s: print(f">> {s}", file=sys.stderr) #if args.debug else None
     src_dir = args.src_root
 
     # Print the normal Makefile pre-amble - setting of tool names, flags, etc.
     # The default target is 'all', which is a list of all linkable executables.
     # Also provides a 'clean' target which removes the build directory.
+    # -Wno-unused-parameter -Wno-sign-compare
     print(dedent(f"""\
-    CC ?= gcc
-    CXX ?= g++
-    CCH ?= cch
-    CFLAGS = -std={args.cstd} -O{args.optimization} -Wall -Wextra -Werror
-    CXXFLAGS = -g -std={args.std} -O{args.optimization} -Wall -Wextra -Werror -Wno-unused-parameter -Wno-sign-compare
-
-    PROTOC ?= ./grpc/cmake/build/third_party/protobuf/protoc --plugin=protoc-gen-grpc=grpc/cmake/build/grpc_cpp_plugin
-
-    PB_INCLUDES = -Igrpc/include/ -Igrpc/third_party/protobuf/src/
-    PB_LIBS = -Lgrpc/cmake/build/ -lprotobuf $(shell PKG_CONFIG_PATH=grpc/cmake/build/libs/opt/pkgconfig/ pkg-config --libs-only-l grpc++_unsecure) -lupb -lcares -lz -laddress_sorting
+    CC = ../../../build/software/host/bin/arm-none-linux-gnueabihf-gcc
+    CXX =../../../build/software/host/bin/arm-none-linux-gnueabihf-g++
+    CCH ?= cch/build/cch
+    CFLAGS = -fno-omit-frame-pointer -pedantic -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.cstd} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fdiagnostics-color=always -Wl,--gc-sections
+    CXXFLAGS = -fno-omit-frame-pointer -pedantic -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.std} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fdiagnostics-color=always -fno-exceptions -Wno-pragma-once-outside-header -fno-rtti -Werror=unused-parameter -ffunction-sections -fdata-sections -fmodules -L../../../build/software/target/usr/lib -lwebsockets -luring-ffi -Wl,--gc-sections
 
     .PHONY: default
     default: all
 
+    FORCE: ;
+    
     .PHONY: clean
     clean:
     \trm -rf {args.build_root}
+    \trm -rf gcm.cache
+    \trm -rf cch/build/cch
     """))
 
     files = []
@@ -397,6 +399,8 @@ if __name__ == "__main__":
             for executable in emitted.executables:
                 dir_targets[os.path.dirname(executable)].append(executable)
         if emitted.directories:
+            #for p in emitted.directories:
+            #    os.makedirs(p, exist_ok=True)
             build_directories.update(emitted.directories)
         if emitted.patterns:
             patterns.update(emitted.patterns)
@@ -415,11 +419,58 @@ if __name__ == "__main__":
     # Output a target to make the directory structure in
     # the build directory.
     #build_directories = " \\\n    \t".join(build_directories)
+    build_directories = " ".join(build_directories)
     executables = " \\\n    \t".join(executables)
     print(dedent(f"""\
-    .PHONY: builddirs
-    builddirs:
-    \t@mkdir -p
+    gcm.cache/liblinux.gcm: src/base/modules/liblinux.ixx
+    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
+
+    gcm.cache/libwebsockets.gcm: src/base/modules/libwebsockets.ixx
+    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
+
+    gcm.cache/liburing.gcm: src/base/modules/liburing.ixx
+    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
+
+    gcm.cache/libpthread.gcm: src/base/modules/libpthread.ixx
+    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
+                 
+    gcm.cache/std.gcm:
+    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c bits/std.cc
+
+    gcm.cache/std.compat.gcm: gcm.cache/std.gcm
+    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c bits/std.compat.cc                 
+
+    .PHONY: make
+    make:
+    \tpython3 make/makefile.py | tee Makefile 2>&1
+
+    docs: Doxyfile
+    \tdoxygen Doxyfile
+
+    emulate: build/{defines['MAKE_EXECUTABLE']}
+    \tqemu-arm-static -L ../../../build/software/host/arm-none-linux-gnueabihf/sysroot build/{defines['MAKE_EXECUTABLE']}
+
+    deploy: build/{defines['MAKE_EXECUTABLE']}
+    \tssh root@{defines['MAKE_DEPLOY_IP']} killall {defines['MAKE_EXECUTABLE']} gdbserver || true 2>&1
+    \tscp build/{defines['MAKE_EXECUTABLE']} root@{defines['MAKE_DEPLOY_IP']}:/root/{defines['MAKE_EXECUTABLE']}
+
+    vscode_remote_gdbserver: deploy
+    \tsystemctl --user stop vscode_remote_gdbserver || true
+    \tsystemctl --user reset-failed vscode_remote_gdbserver || true
+    \tsystemd-run --user --unit=vscode_remote_gdbserver /bin/bash -c "ssh -L20001:127.0.0.1:20001 root@{defines['MAKE_DEPLOY_IP']} 'gdbserver :20001 /root/{defines['MAKE_EXECUTABLE']}'"
+    \twt.exe ssh root@{defines['MAKE_DEPLOY_IP']} "pidof {defines['MAKE_EXECUTABLE']} | xargs -I {{}} cat /proc/{{}}/fd/1"
+    
+    debug: deploy
+    \tssh root@{defines['MAKE_DEPLOY_IP']} "gdbserver :20001 /root/{defines['MAKE_EXECUTABLE']}" &
+    \tsleep 1
+    \t../../../build/software/host/bin/arm-none-linux-gnueabihf-gdb -ex "file build/{defines['MAKE_EXECUTABLE']}" -ex "target remote {defines['MAKE_DEPLOY_IP']}:20001"
+    
+    cch/build/cch: FORCE
+    \t$(MAKE) -C cch
+
+    .PHONY: build-dirs
+    build-dirs: FORCE
+    \tmkdir -p {build_directories}
 
     .PHONY: all
     all: \
@@ -429,5 +480,5 @@ if __name__ == "__main__":
     # Make sure the directory structure in the build directory
     # is in place.  This helps tools/compilers that won't build
     # directory structure on their own.
-    for build_dir in build_directories:
-        pathlib.Path(build_dir).mkdir(parents=True, exist_ok=True)
+    #for build_dir in build_directories:
+    #    pathlib.Path(build_dir).mkdir(parents=True, exist_ok=True)
