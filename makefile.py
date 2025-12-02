@@ -536,7 +536,7 @@ if __name__ == "__main__":
     \t../../../build/software/host/bin/arm-none-linux-gnueabihf-gdb -ex "file build/{defines['MAKE_EXECUTABLE']}" -ex "target remote {defines['MAKE_DEPLOY_IP']}:20001"
     
     cch/build/cch: FORCE
-    \t$(MAKE) -C cch
+    \t$(MAKE) CXX=g++ -C cch
 
     .PHONY: build-dirs
     build-dirs: FORCE
