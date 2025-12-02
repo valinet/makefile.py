@@ -29,10 +29,31 @@ import sys
 import pathlib
 import argparse
 import re
+import subprocess
 from enum import Enum
 from textwrap import dedent
 from collections import defaultdict
 from os.path import join as pathjoin
+from datetime import datetime, timezone
+
+def get_clean_synced_commit():
+    def run(cmd, check=False):
+        return subprocess.run(cmd, text=True, capture_output=True, check=check)
+    try:
+        head = run(["git", "rev-parse", "HEAD"], check=True).stdout.strip()
+    except subprocess.CalledProcessError:
+        return ""
+    if run(["git", "diff-index", "--quiet", "HEAD", "--"]).returncode != 0:
+        return ""
+    if run(["git", "fetch", "origin"]).returncode != 0:
+        return ""
+    try:
+        upstream = run(["git", "rev-parse", "origin/master"], check=True).stdout.strip()
+    except subprocess.CalledProcessError:
+        return ""
+    if head != upstream:
+        return ""
+    return head
 
 defines = {}
 
@@ -359,6 +380,11 @@ if __name__ == "__main__":
     globals()["debug"] = lambda s: print(f">> {s}", file=sys.stderr) #if args.debug else None
     src_dir = args.src_root
 
+    _proj_repo = subprocess.check_output("basename -s .git `git config --get remote.origin.url`", shell=True, text=True).strip()
+    _proj_commit = get_clean_synced_commit()
+    _proj_compiledon = datetime.now().astimezone().replace(microsecond=0).isoformat()
+    _proj_hostname = subprocess.check_output("hostname", shell=True, text=True).strip()
+
     # Print the normal Makefile pre-amble - setting of tool names, flags, etc.
     # The default target is 'all', which is a list of all linkable executables.
     # Also provides a 'clean' target which removes the build directory.
@@ -367,8 +393,8 @@ if __name__ == "__main__":
     CC = ../../../build/software/host/bin/arm-none-linux-gnueabihf-gcc
     CXX =../../../build/software/host/bin/arm-none-linux-gnueabihf-g++
     CCH ?= cch/build/cch
-    CFLAGS = -fno-omit-frame-pointer -pedantic -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.cstd} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fdiagnostics-color=always -Wl,--gc-sections
-    CXXFLAGS = -fno-omit-frame-pointer -pedantic -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.std} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fdiagnostics-color=always -fno-exceptions -Wno-pragma-once-outside-header -fno-rtti -Werror=unused-parameter -ffunction-sections -fdata-sections -fmodules -L../../../build/software/target/usr/lib -lwebsockets -luring-ffi -Wl,--gc-sections
+    CFLAGS = -fno-omit-frame-pointer -pedantic -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\"{_proj_repo}\\" -D_PROJ_COMMIT=\\"{_proj_commit}\\" -D_PROJ_COMPILEDON=\\"{_proj_compiledon}\\" -D_PROJ_HOSTNAME=\\"{_proj_hostname}\\" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.cstd} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fdiagnostics-color=always -Wl,--gc-sections
+    CXXFLAGS = -fno-omit-frame-pointer -pedantic -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\"{_proj_repo}\\" -D_PROJ_COMMIT=\\"{_proj_commit}\\" -D_PROJ_COMPILEDON=\\"{_proj_compiledon}\\" -D_PROJ_HOSTNAME=\\"{_proj_hostname}\\" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.std} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fdiagnostics-color=always -fno-exceptions -Wno-pragma-once-outside-header -fno-rtti -Werror=unused-parameter -ffunction-sections -fdata-sections -fmodules -L../../../build/software/target/usr/lib -lwebsockets -luring-ffi -Wl,--gc-sections
 
     .PHONY: default
     default: all
