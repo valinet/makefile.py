@@ -405,7 +405,7 @@ if __name__ == "__main__":
     clean:
     \trm -rf {args.build_root}
     \trm -rf gcm.cache
-    \trm -rf cch/build/cch
+    \trm -rf cch/build
     """))
 
     files = []
