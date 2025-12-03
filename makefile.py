@@ -39,18 +39,30 @@ from datetime import datetime, timezone
 def get_clean_synced_commit():
     def run(cmd, check=False):
         return subprocess.run(cmd, text=True, capture_output=True, check=check)
+    # Get current HEAD
     try:
         head = run(["git", "rev-parse", "HEAD"], check=True).stdout.strip()
     except subprocess.CalledProcessError:
         return ""
-    if run(["git", "diff-index", "--quiet", "HEAD", "--"]).returncode != 0:
+    # Detect unstaged changes
+    if run(["git", "diff", "--quiet"]).returncode != 0:
         return ""
+    # Detect staged changes
+    if run(["git", "diff", "--cached", "--quiet"]).returncode != 0:
+        return ""
+    # Detect untracked files
+    untracked = run(["git", "ls-files", "--others", "--exclude-standard"])
+    if untracked.stdout.strip():
+        return ""
+    # Fetch
     if run(["git", "fetch", "origin"]).returncode != 0:
         return ""
+    # Get upstream commit
     try:
         upstream = run(["git", "rev-parse", "origin/master"], check=True).stdout.strip()
     except subprocess.CalledProcessError:
         return ""
+    # Compare HEAD to upstream
     if head != upstream:
         return ""
     return head
