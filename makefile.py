@@ -382,7 +382,7 @@ if __name__ == "__main__":
     #parser.add_argument("build_root", help="Base directory of build output")
     parser.add_argument("--std", default="c++23", help="C++ version")
     parser.add_argument("--cstd", default="c23", help="C version")
-    parser.add_argument("--optimization", default="3", help="Optimization level (-OX)")
+    parser.add_argument("--optimization", default="2", help="Optimization level (-OX)")
     parser.add_argument("--debug", action="store_true", help="Debug logging to stderr")
     args = parser.parse_args()
     args.src_root = "src/"
