@@ -409,6 +409,7 @@ if __name__ == "__main__":
     # Also provides a 'clean' target which removes the build directory.
     # -Wno-unused-parameter -Wno-sign-compare
     print(dedent(f"""\
+    BUILD_START := $(shell date +%s%N)
     CC = ../../../build/software/host/bin/arm-none-linux-gnueabihf-gcc
     CXX =../../../build/software/host/bin/arm-none-linux-gnueabihf-g++
     CCH ?= cch/build/cch
@@ -585,8 +586,20 @@ if __name__ == "__main__":
     \tmkdir -p {build_directories}
 
     .PHONY: all
-    all: \
-    \t{executables}
+    all: {executables}
+    \t@{{ \\
+    \t    end=$$(date +%s%N); \\
+    \t    diff_ns=$$((end - $(BUILD_START))); \\
+    \t    diff_ms=$$((diff_ns / 1000000)); \\
+    \t    ms=$$((diff_ms % 1000)); \\
+    \t    sec=$$((diff_ms / 1000)); \\
+    \t    min=$$((sec / 60)); \\
+    \t    sec=$$((sec % 60)); \\
+    \t    $(ECHO) "All done in "; \\
+    \t    printf "\033[F\033[28C%dm%02d,%03ds.\\n" $$min $$sec $$ms; \\
+    \t}}
+
+    endif
     """));
 
     # Make sure the directory structure in the build directory
