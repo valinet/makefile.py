@@ -242,7 +242,8 @@ class CCFile(File):
         includes = " ".join([pathjoin(out_dir, f) for f in self.get_compile_dependencies()])
         compileargs = " ".join(self.compileargs)
         print(f"{obj_file}: {self.fullpath} {includes} gcm.cache/std.gcm gcm.cache/std.compat.gcm gcm.cache/liblinux.gcm gcm.cache/libpthread.gcm gcm.cache/liburing.gcm gcm.cache/libwebsockets.gcm")
-        print(f"\t$(CXX) $(CXXFLAGS) {compileargs} -I{src_dir} -I{out_dir} -c $< -o $@")
+        print(f"\t@$(ECHO) Building CXX object $@")
+        print(f"\t@$(CXX) $(CXXFLAGS) {compileargs} -I{src_dir} -I{out_dir} -c $< -o $@")
         print()
         emitted = Emitted(directories=[os.path.dirname(obj_file)])
         if self.__is_link_target:
@@ -250,7 +251,8 @@ class CCFile(File):
             deps = " ".join([pathjoin(out_dir, x) for x in self.get_link_dependencies()])
             linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
             print(f"{executable}: {deps} {obj_file}")
-            print(f"\t$(CXX) $(CXXFLAGS) -o $@ $^ {linkargs} -pthread")
+            print(f"\t@$(ECHO) Linking CXX executable $@")
+            print(f"\t@$(CXX) $(CXXFLAGS) -o $@ $^ {linkargs} -pthread")
             print()
             emitted.executables = [executable]
         return emitted
@@ -276,6 +278,7 @@ class CFile(File):
         includes = " ".join([pathjoin(out_dir, f) for f in self.get_compile_dependencies()])
         compileargs = " ".join(self.compileargs)
         print(f"{obj_file}: {self.fullpath} {includes}")
+        print(f"\t@$(ECHO) Building C object $@")
         print(f"\t$(CC) $(CFLAGS) -I{src_dir} -I{out_dir} {compileargs} -c $< -o $@")
         print()
         return Emitted(directories=[os.path.dirname(obj_file)])
@@ -297,8 +300,9 @@ class HeaderFile(File):
         src = pathjoin(src_dir, self.dirname, "%.h")
 
         pattern = f"{dst}: {src}\n" \
-                  f"\tmkdir -p {build_dir}\n" \
-                  f"\tcp $< $@\n"
+                  f"\t@$(ECHO) Writing header $@\n" \
+                  f"\t@mkdir -p {build_dir}\n" \
+                  f"\t@cp $< $@\n"
         
         return Emitted(directories=[build_dir], patterns=[pattern])
 
@@ -327,10 +331,12 @@ class CCHFile(File):
         include_path = pathjoin(self.dirname, "%f")
 
         pattern = f"{output_base}.cc {output_base}.h: {src_pattern} | cch/build/cch\n" \
+                  f"\t@$(ECHO) Building CCH object $@\n" \
                   f"\t$(CCH) --diff --noBanner --input $< --output={build_dir}/%f\n"
 
         print(f"{obj_file}: {cc_file} {header_file} {includes} gcm.cache/std.gcm gcm.cache/std.compat.gcm gcm.cache/liblinux.gcm gcm.cache/libpthread.gcm gcm.cache/liburing.gcm gcm.cache/libwebsockets.gcm")
-        print(f"\t$(CXX) $(CXXFLAGS) -I{src_dir} -I{out_dir} {compileargs} -c $< -o $@")
+        print(f"\t@$(ECHO) Building CXX object $@")
+        print(f"\t@$(CXX) $(CXXFLAGS) -I{src_dir} -I{out_dir} {compileargs} -c $< -o $@")
         print()
         emitted = Emitted(directories=[build_dir], patterns=[pattern])
         if self.__is_link_target:
@@ -338,7 +344,8 @@ class CCHFile(File):
             deps = " ".join([pathjoin(out_dir, x) for x in self.get_link_dependencies()])
             linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
             print(f"{executable}: {deps} {obj_file} | cch/build/cch")
-            print(f"\t$(CXX) $(CXXFLAGS) -o $@ $^ {linkargs} -pthread")
+            print(f"\t@$(ECHO) Linking CXX executable $@")
+            print(f"\t@$(CXX) $(CXXFLAGS) -o $@ $^ {linkargs} -pthread")
             print()
             emitted.executables = [executable]
         return emitted
@@ -407,6 +414,23 @@ if __name__ == "__main__":
     CCH ?= cch/build/cch
     CFLAGS = -fno-omit-frame-pointer -pedantic -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\"{_proj_repo}\\" -D_PROJ_COMMIT=\\"{_proj_commit}\\" -D_PROJ_COMPILEDON=\\"{_proj_compiledon}\\" -D_PROJ_HOSTNAME=\\"{_proj_hostname}\\" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.cstd} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fdiagnostics-color=always -Wl,--gc-sections
     CXXFLAGS = -fno-omit-frame-pointer -pedantic -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\"{_proj_repo}\\" -D_PROJ_COMMIT=\\"{_proj_commit}\\" -D_PROJ_COMPILEDON=\\"{_proj_compiledon}\\" -D_PROJ_HOSTNAME=\\"{_proj_hostname}\\" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.std} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fdiagnostics-color=always -fno-exceptions -Wno-pragma-once-outside-header -fno-rtti -Werror=unused-parameter -ffunction-sections -fdata-sections -fmodules -L../../../build/software/target/usr/lib -lwebsockets -luring-ffi -Wl,--gc-sections
+
+    _mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
+    I := $(patsubst %/,%,$(dir $(_mkfile_path)))
+    ifneq ($(words $(MAKECMDGOALS)),1) # if no argument was given to make...
+    .DEFAULT_GOAL = all # set the default goal to all
+    %:                   # define a last resort default rule
+    \t@$(MAKE) $@ --no-print-directory -rRf $(firstword $(MAKEFILE_LIST)) # recursive make call, 
+    else
+    ifndef ECHO
+    T := $(shell $(MAKE) $(MAKECMDGOALS) --no-print-directory \
+      -nrRf $(firstword $(MAKEFILE_LIST)) \
+      ECHO="COUNTTHIS" | grep -c "COUNTTHIS")
+    N := x
+    C = $(words $N)$(eval N := x $N)
+    ECHO = C=$$(echo $(C)); \
+       echo -ne "\r\033[1;34m[$${{C}}\057$T($$(expr $${{C}} '*' 100 / $T)%)]\033[0m"
+    endif
 
     .PHONY: default
     default: all
@@ -505,22 +529,28 @@ if __name__ == "__main__":
     executables = " \\\n    \t".join(executables)
     print(dedent(f"""\
     gcm.cache/liblinux.gcm: src/base/modules/liblinux.ixx
-    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
+    \t@$(ECHO) Precompiling module $@
+    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
 
     gcm.cache/libwebsockets.gcm: src/base/modules/libwebsockets.ixx
-    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
+    \t@$(ECHO) Precompiling module $@
+    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
 
     gcm.cache/liburing.gcm: src/base/modules/liburing.ixx
-    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
+    \t@$(ECHO) Precompiling module $@
+    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
 
     gcm.cache/libpthread.gcm: src/base/modules/libpthread.ixx
-    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
+    \t@$(ECHO) Precompiling module $@
+    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
                  
     gcm.cache/std.gcm:
-    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c bits/std.cc
+    \t@$(ECHO) Precompiling standard library $@
+    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c bits/std.cc
 
     gcm.cache/std.compat.gcm: gcm.cache/std.gcm
-    \t$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c bits/std.compat.cc                 
+    \t@$(ECHO) Precompiling standard library $@
+    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c bits/std.compat.cc                 
 
     .PHONY: make
     make:
