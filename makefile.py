@@ -252,7 +252,7 @@ class CCFile(File):
             linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
             print(f"{executable}: {deps} {obj_file}")
             print(f"\t@$(ECHO) Linking CXX executable $@")
-            print(f"\t@$(CXX) $(CXXFLAGS) -o $@ $^ {linkargs} -pthread")
+            print(f"\t@$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ {linkargs} -pthread")
             print()
             emitted.executables = [executable]
         return emitted
@@ -351,7 +351,7 @@ class CCHFile(File):
             linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
             print(f"{executable}: {deps} {obj_file} | cch/build/cch")
             print(f"\t@$(ECHO) Linking CXX executable $@")
-            print(f"\t@$(CXX) $(CXXFLAGS) -o $@ $^ {linkargs} -pthread")
+            print(f"\t@$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ {linkargs} -pthread")
             print()
             emitted.executables = [executable]
         return emitted
@@ -431,8 +431,9 @@ if __name__ == "__main__":
     CC = ../../../build/software/host/bin/arm-none-linux-gnueabihf-gcc
     CXX =../../../build/software/host/bin/arm-none-linux-gnueabihf-g++
     CCH ?= cch/build/cch
-    CFLAGS = -fno-PIE -fno-omit-frame-pointer -pedantic -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\"{_proj_repo}\\" -D_PROJ_COMMIT=\\"{_proj_commit}\\" -D_PROJ_COMPILEDON=\\"{_proj_compiledon}\\" -D_PROJ_HOSTNAME=\\"{_proj_hostname}\\" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.cstd} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fdiagnostics-color=always -Wl,--gc-sections
-    CXXFLAGS = -fno-PIE -fno-omit-frame-pointer -pedantic -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\"{_proj_repo}\\" -D_PROJ_COMMIT=\\"{_proj_commit}\\" -D_PROJ_COMPILEDON=\\"{_proj_compiledon}\\" -D_PROJ_HOSTNAME=\\"{_proj_hostname}\\" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.std} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fdiagnostics-color=always -fno-exceptions -Wno-pragma-once-outside-header -fno-rtti -Werror=unused-parameter -ffunction-sections -fdata-sections -fmodules -L../../../build/software/target/usr/lib -lwebsockets -luring-ffi -Wl,--gc-sections
+    CFLAGS = -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\"{_proj_repo}\\" -D_PROJ_COMMIT=\\"{_proj_commit}\\" -D_PROJ_COMPILEDON=\\"{_proj_compiledon}\\" -D_PROJ_HOSTNAME=\\"{_proj_hostname}\\" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.cstd} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fno-PIE -fno-omit-frame-pointer -pedantic -fdiagnostics-color=always -Wl,--gc-sections
+    CXXFLAGS = -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\"{_proj_repo}\\" -D_PROJ_COMMIT=\\"{_proj_commit}\\" -D_PROJ_COMPILEDON=\\"{_proj_compiledon}\\" -D_PROJ_HOSTNAME=\\"{_proj_hostname}\\" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.std} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fno-PIE -fno-omit-frame-pointer -pedantic -fdiagnostics-color=always -Wl,--gc-sections -fno-exceptions -fno-rtti -Werror=unused-parameter -ffunction-sections -fdata-sections -fmodules
+    LDFLAGS = -L../../../build/software/target/usr/lib -lwebsockets -luring-ffi gcm.cache/fmt.gcm.o
 
     _mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
     I := $(patsubst %/,%,$(dir $(_mkfile_path)))
