@@ -35,6 +35,7 @@ from textwrap import dedent
 from collections import defaultdict
 from os.path import join as pathjoin
 from datetime import datetime, timezone
+from itertools import chain
 
 def get_clean_synced_commit():
     def run(cmd, check=False):
@@ -131,8 +132,8 @@ def get_includes(contents, regex=re.compile(r'^\s*#include\s*"([^"]+)"\s*$', re.
         i += 1
     return output_includes
 #    return regex.findall(contents)
-def get_imports(contents, regex=re.compile(r'^\s*import\s*"([^"]+)"\s*;\s*$', re.MULTILINE)):
-    return regex.findall(contents)
+def get_imports(contents, regex=re.compile(r'^\s*import\s+(?:"([^"]+)"|([A-Za-z_]\w*))\s*;\s*$', re.MULTILINE)):
+    return [ m.group(1) or m.group(2) for m in regex.finditer(contents) ]
 def get_compileargs(contents, regex=re.compile(r'^\s*//\s*@compileargs\s+(.*)\s*$', re.MULTILINE)):
     return regex.findall(contents)
 def get_linkargs(contents, regex=re.compile(r'^\s*//\s*@linkargs\s+(.*)\s*$', re.MULTILINE)):
@@ -402,11 +403,25 @@ if __name__ == "__main__":
     args.build_root = "build"
     args.modules_dir = "base/modules"
     
+    modules_rules = ""
     modules_list = "" # build/base/pch.cch.h.gch
     for filename in find_files(args.src_root + args.modules_dir, [".hm"]):
         modules_list += f"gcm.cache/,/{filename}.gcm "
-    for filename in find_files(args.src_root + args.modules_dir, [".cppm"]):
-        modules_list += f"gcm.cache/{os.path.basename(filename).rsplit(".", 1)[0] + ".gcm"} "
+    for filename in chain(find_files(args.src_root + args.modules_dir, [".cppm"]), find_files(args.src_root + args.modules_dir, [".ixx"])):
+        module_deps = ""
+        with open(filename, "r") as f:
+            contents = f.read()
+            module_deps = " ".join(["gcm.cache/" + x + ".gcm" for x in get_imports(contents) if x and x != "std"])
+        module_name = f"{os.path.basename(filename).rsplit(".", 1)[0]}"
+        modules_list += f"gcm.cache/{module_name + ".gcm"} "
+        if filename.endswith(".cppm"):
+            modules_rules += f"    gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.cppm gcm.cache/std.gcm {module_deps}\n" \
+                             f"    \t@$(ECHO) Compiling named module $@\n" \
+                             f"    \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -fmodule-only -c $<\n\n"
+        else:
+            modules_rules += f"    gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.ixx gcm.cache/std.gcm {module_deps}\n" \
+                             f"    \t@$(ECHO) Compiling named module $@ and its object file\n" \
+                             f"    \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -c $< -o $@.o\n\n"
     for filename in find_files(args.src_root + args.modules_dir, [".ixx"]):
         modules_list += f"gcm.cache/{os.path.basename(filename).rsplit(".", 1)[0] + ".gcm"} "
     modules_list += "gcm.cache/std.gcm"
@@ -550,15 +565,7 @@ if __name__ == "__main__":
     #build_directories = " \\\n    \t".join(build_directories)
     build_directories = " ".join(build_directories)
     executables = " \\\n    \t".join(executables)
-    print(dedent(f"""\
-    gcm.cache/%.gcm: {args.src_root}{args.modules_dir}/%.ixx gcm.cache/std.gcm
-    \t@$(ECHO) Compiling named module $@ and its object file
-    \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -c $< -o $@.o
-
-    gcm.cache/%.gcm: {args.src_root}{args.modules_dir}/%.cppm gcm.cache/std.gcm
-    \t@$(ECHO) Compiling named module $@
-    \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -fmodule-only -c $<
-            
+    print(dedent(f"""{modules_rules}\
     gcm.cache/,/{args.src_root}{args.modules_dir}/%.hm.gcm: {args.src_root}{args.modules_dir}/%.hm gcm.cache/std.gcm
     \t@$(ECHO) Compiling header unit $@
     \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -fmodule-header -x c++-header -c $<
