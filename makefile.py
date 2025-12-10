@@ -167,6 +167,7 @@ class File:
         self.compileargs = []
         self.linkargs = []
         self.imports = []
+        self.is_link_target = False
         self.initialize(contents)
 
     def initialize(self, contents):
@@ -229,7 +230,7 @@ class CCFile(File):
         self.includes = get_includes(contents)
         self.compileargs = get_compileargs(contents)
         self.linkargs = get_linkargs(contents)
-        self.__is_link_target = has_main(contents)
+        self.is_link_target = has_main(contents)
 
     def get_aliases(self):
         return [self.filename, self.swap_extension(".h")]
@@ -243,12 +244,12 @@ class CCFile(File):
         obj_file = pathjoin(out_dir, self.swap_extension(".o"))
         includes = " ".join([pathjoin(out_dir, f) for f in self.get_compile_dependencies()])
         compileargs = " ".join(self.compileargs)
-        print(f"{obj_file}: {self.fullpath} {includes} {modules_list}")
+        print(f"{obj_file}: {self.fullpath} {includes}")
         print(f"\t@$(ECHO) Building CXX object $@")
         print(f"\t@$(CXX) $(CXXFLAGS) {compileargs} -I{out_dir} -I{src_dir} -c $< -o $@")
         print()
         emitted = Emitted(directories=[os.path.dirname(obj_file)])
-        if self.__is_link_target:
+        if self.is_link_target:
             executable = pathjoin(out_dir, self.swap_extension(""))
             deps = " ".join([pathjoin(out_dir, x) for x in self.get_link_dependencies()])
             linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
@@ -318,7 +319,7 @@ class CCHFile(File):
         self.includes = filter(lambda s: not s in self.get_aliases(), get_includes(contents))
         self.compileargs = get_compileargs(contents)
         self.linkargs = get_linkargs(contents)
-        self.__is_link_target = has_main(contents)
+        self.is_link_target = has_main(contents)
 
     def get_aliases(self):
         return [self.filename, self.filename + ".h"]
@@ -349,7 +350,7 @@ class CCHFile(File):
         print(f"\t@$(CXX) $(CXXFLAGS) -I{out_dir} -I{src_dir} {compileargs} -c $< -o $@")
         print()
         emitted = Emitted(directories=[build_dir], patterns=[pattern])
-        if self.__is_link_target:
+        if self.is_link_target:
             executable = pathjoin(out_dir, self.swap_extension(""))
             deps = " ".join([pathjoin(out_dir, x) for x in self.get_link_dependencies() if x != "base/pch.cch.o"])
             linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
@@ -405,22 +406,7 @@ if __name__ == "__main__":
     args.src_root = "src/"
     args.build_root = "build"
     args.modules_dir = "base/modules"
-    
-    modules_rules = ""
-    for filename in chain(find_files(args.src_root + args.modules_dir, [".cppm"]), find_files(args.src_root + args.modules_dir, [".ixx"])):
-        module_deps = ""
-        with open(filename, "r") as f:
-            contents = f.read()
-            module_deps = " ".join(["gcm.cache/" + x + ".gcm" for x in get_imports(contents) if x and x != "std"])
-        module_name = f"{os.path.basename(filename).rsplit(".", 1)[0]}"
-        if filename.endswith(".cppm"):
-            modules_rules += f"    gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.cppm gcm.cache/std.gcm {module_deps}\n" \
-                             f"    \t@$(ECHO) Compiling named module $@\n" \
-                             f"    \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -fmodule-only -c $<\n\n"
-        else:
-            modules_rules += f"    gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.ixx gcm.cache/std.gcm {module_deps}\n" \
-                             f"    \t@$(ECHO) Compiling named module $@ and its object file\n" \
-                             f"    \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -c $< -o $@.o\n\n"
+    args.do_not_emit_unused=True
 
     # Set the two global variables.
     globals()["debug"] = lambda s: print(f">> {s}", file=sys.stderr) #if args.debug else None
@@ -478,10 +464,14 @@ if __name__ == "__main__":
 
     files = []
     file_map = {}
+    usage_count = {}
 
     # Enumerate the set of files in the source root that
     # we are interested in putting into the Makefile.
     for filename in find_files(src_dir, file_types.keys()):
+        if args.do_not_emit_unused:
+            usage_count[filename] = 0
+
         with open(filename, "r") as f:
             contents = f.read()
 
@@ -509,10 +499,22 @@ if __name__ == "__main__":
             if include not in file_map:
                 raise Exception(f"{file.filename} references unknown file {include}")
             include = file_map[include]
+            if args.do_not_emit_unused:
+                if args.src_root + include.filename in usage_count:
+                    usage_count[args.src_root + include.filename] += 1
             # Don't add a file as a dependency of itself.
             if include is not file:
                 file.dependencies.append(include)
 
+    if args.do_not_emit_unused:
+        unused_files = {k: v for k, v in usage_count.items() if v == 0}
+        files = [ file for file in files if file.is_link_target or file.fullpath not in unused_files ]
+        all_imports = []
+        for file in files:
+            for item in file.imports:
+                if item not in all_imports:
+                    all_imports.append(item)
+        all_imports = ["gcm.cache/" + (f",/{args.src_root}" + x if "/" in x else x) + ".gcm" for x in all_imports if x]
 
     executables = []
     build_directories = set()
@@ -552,6 +554,24 @@ if __name__ == "__main__":
         print(f"{dir} {dir}/: {' '.join(products)}")
         print()
 
+    for filename in chain(find_files(args.src_root + args.modules_dir, [".cppm"]), find_files(args.src_root + args.modules_dir, [".ixx"])):
+        module_name = f"{os.path.basename(filename).rsplit(".", 1)[0]}"
+        if args.do_not_emit_unused:
+            if f"gcm.cache/{module_name}.gcm" not in all_imports:
+                continue
+        module_deps = ""
+        with open(filename, "r") as f:
+            contents = f.read()
+            module_deps = " ".join(["gcm.cache/" + x + ".gcm" for x in get_imports(contents) if x and x != "std"])
+        if filename.endswith(".cppm"):
+            print(f"gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.cppm gcm.cache/std.gcm {module_deps}\n" \
+                  f"\t@$(ECHO) Compiling named module $@\n" \
+                  f"\t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -fmodule-only -c $<\n\n")
+        else:
+            print(f"gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.ixx gcm.cache/std.gcm {module_deps}\n" \
+                  f"\t@$(ECHO) Compiling named module $@ and its object file\n" \
+                  f"\t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -c $< -o $@.o\n\n")
+
     # Print the Makefile post-amble.  Include all of the
     # executable targets in the default Makefile target.
     # Output a target to make the directory structure in
@@ -559,7 +579,7 @@ if __name__ == "__main__":
     #build_directories = " \\\n    \t".join(build_directories)
     build_directories = " ".join(build_directories)
     executables = " \\\n    \t".join(executables)
-    print(dedent(f"""{modules_rules}\
+    print(dedent(f"""\
     gcm.cache/,/{args.src_root}{args.modules_dir}/%.hm.gcm: {args.src_root}{args.modules_dir}/%.hm gcm.cache/std.gcm
     \t@$(ECHO) Compiling header unit $@
     \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -fmodule-header -x c++-header -c $<
