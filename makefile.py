@@ -132,7 +132,7 @@ def get_includes(contents, regex=re.compile(r'^\s*#include\s*"([^"]+)"\s*$', re.
         i += 1
     return output_includes
 #    return regex.findall(contents)
-def get_imports(contents, regex=re.compile(r'^\s*import\s+(?:"([^"]+)"|([A-Za-z_]\w*))\s*;\s*$', re.MULTILINE)):
+def get_imports(contents, regex=re.compile(r'^\s*import\s+(?:"([^"]+)"|([^;\s]+))\s*;\s*$', re.MULTILINE)):
     return [ m.group(1) or m.group(2) for m in regex.finditer(contents) ]
 def get_compileargs(contents, regex=re.compile(r'^\s*//\s*@compileargs\s+(.*)\s*$', re.MULTILINE)):
     return regex.findall(contents)
@@ -166,6 +166,7 @@ class File:
         self.includes = []
         self.compileargs = []
         self.linkargs = []
+        self.imports = []
         self.initialize(contents)
 
     def initialize(self, contents):
@@ -289,6 +290,7 @@ class HeaderFile(File):
 
     def initialize(self, contents):
         self.includes = filter(lambda s: s not in self.get_aliases(), get_includes(contents))
+        self.imports = get_imports(contents)
 
     def has_relation(self, file):
         if self.base == file.base and file.extension in [CCFile.extension, CFile.extension]:
@@ -296,11 +298,12 @@ class HeaderFile(File):
         return FileAction.INCOMPATIBLE
 
     def emit(self, out_dir):
+        import_deps = " ".join(["gcm.cache/" + (f",/{args.src_root}" + x if "/" in x else x) + ".gcm" for x in self.imports if x and x != "std"])
         build_dir = pathjoin(out_dir, self.dirname)
-        dst = pathjoin(build_dir, "%.h")
-        src = pathjoin(src_dir, self.dirname, "%.h")
+        dst = pathjoin(build_dir, "%.h" if len(import_deps) == 0 else f"{os.path.basename(self.filename)}")
+        src = pathjoin(src_dir, self.dirname, "%.h" if len(import_deps) == 0 else f"{os.path.basename(self.filename)}")
 
-        pattern = f"{dst}: {src}\n" \
+        pattern = f"{dst}: {src} {import_deps}\n" \
                   f"\t@$(ECHO) Writing header $@\n" \
                   f"\t@mkdir -p {build_dir}\n" \
                   f"\t@cp $< $@\n"
@@ -341,7 +344,7 @@ class CCHFile(File):
                   f"\t@$(ECHO) Building CCH object $@\n" \
                   f"\t$(CCH) --diff --noBanner --input $< --output={build_dir}/%f\n" # --pch \"base/pch.cch.h\"
 
-        print(f"{obj_file}: {cc_file} {header_file} {includes} {modules_list}")
+        print(f"{obj_file}: {cc_file} {header_file} {includes}")
         print(f"\t@$(ECHO) Building CXX object $@")
         print(f"\t@$(CXX) $(CXXFLAGS) -I{out_dir} -I{src_dir} {compileargs} -c $< -o $@")
         print()
@@ -404,16 +407,12 @@ if __name__ == "__main__":
     args.modules_dir = "base/modules"
     
     modules_rules = ""
-    modules_list = "" # build/base/pch.cch.h.gch
-    for filename in find_files(args.src_root + args.modules_dir, [".hm"]):
-        modules_list += f"gcm.cache/,/{filename}.gcm "
     for filename in chain(find_files(args.src_root + args.modules_dir, [".cppm"]), find_files(args.src_root + args.modules_dir, [".ixx"])):
         module_deps = ""
         with open(filename, "r") as f:
             contents = f.read()
             module_deps = " ".join(["gcm.cache/" + x + ".gcm" for x in get_imports(contents) if x and x != "std"])
         module_name = f"{os.path.basename(filename).rsplit(".", 1)[0]}"
-        modules_list += f"gcm.cache/{module_name + ".gcm"} "
         if filename.endswith(".cppm"):
             modules_rules += f"    gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.cppm gcm.cache/std.gcm {module_deps}\n" \
                              f"    \t@$(ECHO) Compiling named module $@\n" \
@@ -422,11 +421,6 @@ if __name__ == "__main__":
             modules_rules += f"    gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.ixx gcm.cache/std.gcm {module_deps}\n" \
                              f"    \t@$(ECHO) Compiling named module $@ and its object file\n" \
                              f"    \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -c $< -o $@.o\n\n"
-    for filename in find_files(args.src_root + args.modules_dir, [".ixx"]):
-        modules_list += f"gcm.cache/{os.path.basename(filename).rsplit(".", 1)[0] + ".gcm"} "
-    modules_list += "gcm.cache/std.gcm"
-    #modules_list = "build/base/pch.cch.h.gch"
-    #print(f">> {modules_list}", file=sys.stderr)
 
     # Set the two global variables.
     globals()["debug"] = lambda s: print(f">> {s}", file=sys.stderr) #if args.debug else None
