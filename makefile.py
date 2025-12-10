@@ -449,7 +449,7 @@ if __name__ == "__main__":
     N := x
     C = $(words $N)$(eval N := x $N)
     ECHO = C=$$(echo $(C)); \
-       echo -ne "\r\033[1;34m[$${{C}}\057$T($$(expr $${{C}} '*' 100 / $T)%)]\033[0m"
+       echo -ne "\r\033[1;36m[$$(printf '%3d' $${{C}})\057$$(printf '%3d' $T) $$(printf '%3d' $$(expr $${{C}} '*' 100 / $T))%]\033[0m"
     endif
 
     .PHONY: default
