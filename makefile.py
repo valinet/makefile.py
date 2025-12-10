@@ -251,10 +251,10 @@ class CCFile(File):
         if self.is_link_target:
             executable = pathjoin(out_dir, self.swap_extension(""))
             deps = " ".join([pathjoin(out_dir, x) for x in self.get_link_dependencies()])
-            linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
+            #linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
             print(f"{executable}: {deps} {obj_file}")
             print(f"\t@$(ECHO) Linking CXX executable $@")
-            print(f"\t@$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ {linkargs} -pthread")
+            print(f"\t@$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ -pthread")
             print()
             emitted.executables = [executable]
         return emitted
@@ -291,6 +291,7 @@ class HeaderFile(File):
     def initialize(self, contents):
         self.includes = filter(lambda s: s not in self.get_aliases(), get_includes(contents))
         self.imports = get_imports(contents)
+        self.linkargs = get_linkargs(contents)
 
     def has_relation(self, file):
         if self.base == file.base and file.extension in [CCFile.extension, CFile.extension]:
@@ -352,10 +353,10 @@ class CCHFile(File):
         if self.is_link_target:
             executable = pathjoin(out_dir, self.swap_extension(""))
             deps = " ".join([pathjoin(out_dir, x) for x in self.get_link_dependencies() if x != "base/pch.cch.o"])
-            linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
+            #linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
             print(f"{executable}: {deps} {obj_file} | cch/build/cch")
             print(f"\t@$(ECHO) Linking CXX executable $@")
-            print(f"\t@$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ {linkargs} -pthread")
+            print(f"\t@$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ -pthread")
             print()
             emitted.executables = [executable]
         return emitted
@@ -522,6 +523,7 @@ if __name__ == "__main__":
                 if item not in all_imports:
                     all_imports.append(item)
         all_imports = ["gcm.cache/" + (f",/{args.src_root}" + x if "/" in x else x) + ".gcm" for x in all_imports if x]
+    ldflags += " " + " ".join(" ".join(file.linkargs) for file in files if file.linkargs)
 
     executables = []
     build_directories = set()
