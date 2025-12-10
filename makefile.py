@@ -35,7 +35,6 @@ from textwrap import dedent
 from collections import defaultdict
 from os.path import join as pathjoin
 from datetime import datetime, timezone
-from itertools import chain
 
 def get_clean_synced_commit():
     def run(cmd, check=False):
@@ -423,7 +422,7 @@ if __name__ == "__main__":
              f" -fno-PIE -fno-omit-frame-pointer -fstack-protector-strong" \
              f" -pedantic -fdiagnostics-color=always -Wl,--gc-sections"
     cxxflags = f"-std={args.std}{cflags} -fno-exceptions -fno-rtti -Werror=unused-parameter -ffunction-sections -fdata-sections -fmodules"
-    ldflags = f"-L../../../build/software/target/usr/lib -lwebsockets -luring-ffi gcm.cache/fmt.gcm.o"
+    ldflags = f"-L../../../build/software/target/usr/lib"
     cflags = f"-std={args.cstd}{cflags}"
 
     # Print the normal Makefile pre-amble - setting of tool names, flags, etc.
@@ -437,7 +436,6 @@ if __name__ == "__main__":
     CCH ?= cch/build/cch
     CFLAGS = {cflags}
     CXXFLAGS = {cxxflags}
-    LDFLAGS = {ldflags}
 
     _mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
     I := $(patsubst %/,%,$(dir $(_mkfile_path)))
@@ -563,7 +561,7 @@ if __name__ == "__main__":
         print(f"{dir} {dir}/: {' '.join(products)}")
         print()
 
-    for filename in chain(find_files(args.src_root + args.modules_dir, [".cppm"]), find_files(args.src_root + args.modules_dir, [".ixx"])):
+    for filename in find_files(args.src_root + args.modules_dir, [".cppm"]):
         module_name = f"{os.path.basename(filename).rsplit(".", 1)[0]}"
         if args.do_not_emit_unused:
             if f"gcm.cache/{module_name}.gcm" not in all_imports:
@@ -572,14 +570,10 @@ if __name__ == "__main__":
         with open(filename, "r") as f:
             contents = f.read()
             module_deps = " ".join(["gcm.cache/" + x + ".gcm" for x in get_imports(contents) if x and x != "std"])
-        if filename.endswith(".cppm"):
-            print(f"gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.cppm gcm.cache/std.gcm {module_deps}\n" \
-                  f"\t@$(ECHO) Compiling named module $@\n" \
-                  f"\t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -fmodule-only -c $<\n\n")
-        else:
-            print(f"gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.ixx gcm.cache/std.gcm {module_deps}\n" \
-                  f"\t@$(ECHO) Compiling named module $@ and its object file\n" \
-                  f"\t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -c $< -o $@.o\n\n")
+        print(f"gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.cppm gcm.cache/std.gcm {module_deps}\n" \
+                f"\t@$(ECHO) Compiling named module $@ and its object file\n" \
+                f"\t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -c $< -o $@.o\n\n")
+        ldflags += f" gcm.cache/{module_name}.gcm.o"
 
     # Print the Makefile post-amble.  Include all of the
     # executable targets in the default Makefile target.
@@ -650,6 +644,8 @@ if __name__ == "__main__":
     \t    printf "\033[F\033[28C%dm%02d,%03ds.\\n" $$min $$sec $$ms; \\
     \t}}
 
+    LDFLAGS = {ldflags}
+    
     endif
     """));
 
