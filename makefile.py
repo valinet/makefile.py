@@ -573,7 +573,7 @@ if __name__ == "__main__":
             contents = f.read()
             module_deps = " ".join(["gcm.cache/" + x + ".gcm" for x in get_imports(contents) if x and x != "std"])
         print(f"gcm.cache/{module_name}.gcm: {args.src_root}{args.modules_dir}/{module_name}.cppm gcm.cache/std.gcm {module_deps}\n" \
-                f"\t@$(ECHO) Compiling named module $@ and its object file\n" \
+                f"\t@$(ECHO) Compiling named module $@\n" \
                 f"\t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -c $< -o $@.o\n\n")
         ldflags += f" gcm.cache/{module_name}.gcm.o"
 
