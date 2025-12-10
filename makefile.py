@@ -241,9 +241,9 @@ class CCFile(File):
         obj_file = pathjoin(out_dir, self.swap_extension(".o"))
         includes = " ".join([pathjoin(out_dir, f) for f in self.get_compile_dependencies()])
         compileargs = " ".join(self.compileargs)
-        print(f"{obj_file}: {self.fullpath} {includes} gcm.cache/std.gcm gcm.cache/std.compat.gcm gcm.cache/liblinux.gcm gcm.cache/libpthread.gcm gcm.cache/liburing.gcm gcm.cache/libwebsockets.gcm")
+        print(f"{obj_file}: {self.fullpath} {includes} {modules_list}")
         print(f"\t@$(ECHO) Building CXX object $@")
-        print(f"\t@$(CXX) $(CXXFLAGS) {compileargs} -I{src_dir} -I{out_dir} -c $< -o $@")
+        print(f"\t@$(CXX) $(CXXFLAGS) {compileargs} -I{out_dir} -I{src_dir} -c $< -o $@")
         print()
         emitted = Emitted(directories=[os.path.dirname(obj_file)])
         if self.__is_link_target:
@@ -329,19 +329,25 @@ class CCHFile(File):
         output_base = pathjoin(build_dir, "%.cch")
         src_pattern = pathjoin(src_dir, self.dirname, "%.cch")
         include_path = pathjoin(self.dirname, "%f")
+        
+        if obj_file.endswith("build/base/pch.cch.o"):
+            pattern = f"build/base/pch.cch.h.gch: src/base/pch.cch {includes}\n" \
+                      f"\t@$(ECHO) Precompiling header $@\n" \
+                      f"\t$(CXX) $(CXXFLAGS) -I{src_dir} -I{out_dir} -c -x c++-header $< -o $@\n"
+            return Emitted(directories=[build_dir], patterns=[pattern])
 
         pattern = f"{output_base}.cc {output_base}.h: {src_pattern} | cch/build/cch\n" \
                   f"\t@$(ECHO) Building CCH object $@\n" \
-                  f"\t$(CCH) --diff --noBanner --input $< --output={build_dir}/%f\n"
+                  f"\t$(CCH) --diff --noBanner --input $< --output={build_dir}/%f\n" # --pch \"base/pch.cch.h\"
 
-        print(f"{obj_file}: {cc_file} {header_file} {includes} gcm.cache/std.gcm gcm.cache/std.compat.gcm gcm.cache/liblinux.gcm gcm.cache/libpthread.gcm gcm.cache/liburing.gcm gcm.cache/libwebsockets.gcm")
+        print(f"{obj_file}: {cc_file} {header_file} {includes} {modules_list}")
         print(f"\t@$(ECHO) Building CXX object $@")
-        print(f"\t@$(CXX) $(CXXFLAGS) -I{src_dir} -I{out_dir} {compileargs} -c $< -o $@")
+        print(f"\t@$(CXX) $(CXXFLAGS) -I{out_dir} -I{src_dir} {compileargs} -c $< -o $@")
         print()
         emitted = Emitted(directories=[build_dir], patterns=[pattern])
         if self.__is_link_target:
             executable = pathjoin(out_dir, self.swap_extension(""))
-            deps = " ".join([pathjoin(out_dir, x) for x in self.get_link_dependencies()])
+            deps = " ".join([pathjoin(out_dir, x) for x in self.get_link_dependencies() if x != "base/pch.cch.o"])
             linkargs = " ".join(list(self.get_linkargs()) + self.linkargs)
             print(f"{executable}: {deps} {obj_file} | cch/build/cch")
             print(f"\t@$(ECHO) Linking CXX executable $@")
@@ -394,6 +400,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.src_root = "src/"
     args.build_root = "build"
+    args.modules_dir = "base/modules"
+    
+    modules_list = "" # build/base/pch.cch.h.gch
+    for filename in find_files(args.src_root + args.modules_dir, [".hm"]):
+        modules_list += f"gcm.cache/,/{filename}.gcm "
+    for filename in find_files(args.src_root + args.modules_dir, [".cppm"]):
+        modules_list += f"gcm.cache/{os.path.basename(filename).rsplit(".", 1)[0] + ".gcm"} "
+    for filename in find_files(args.src_root + args.modules_dir, [".ixx"]):
+        modules_list += f"gcm.cache/{os.path.basename(filename).rsplit(".", 1)[0] + ".gcm"} "
+    modules_list += "gcm.cache/std.gcm"
+    #modules_list = "build/base/pch.cch.h.gch"
+    #print(f">> {modules_list}", file=sys.stderr)
 
     # Set the two global variables.
     globals()["debug"] = lambda s: print(f">> {s}", file=sys.stderr) #if args.debug else None
@@ -529,30 +547,25 @@ if __name__ == "__main__":
     build_directories = " ".join(build_directories)
     executables = " \\\n    \t".join(executables)
     print(dedent(f"""\
-    gcm.cache/liblinux.gcm: src/base/modules/liblinux.ixx
-    \t@$(ECHO) Precompiling module $@
-    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
+    gcm.cache/%.gcm: {args.src_root}{args.modules_dir}/%.ixx gcm.cache/std.gcm
+    \t@$(ECHO) Compiling named module $@ and its object file
+    \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -c $< -o $@.o
 
-    gcm.cache/libwebsockets.gcm: src/base/modules/libwebsockets.ixx
-    \t@$(ECHO) Precompiling module $@
-    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
+    gcm.cache/%.gcm: {args.src_root}{args.modules_dir}/%.cppm gcm.cache/std.gcm
+    \t@$(ECHO) Compiling named module $@
+    \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -fmodule-only -c $<
+            
+    gcm.cache/,/{args.src_root}{args.modules_dir}/%.hm.gcm: {args.src_root}{args.modules_dir}/%.hm gcm.cache/std.gcm
+    \t@$(ECHO) Compiling header unit $@
+    \t@$(CXX) $(CXXFLAGS) -I{args.src_root} -fsearch-include-path -fmodule-header -x c++-header -c $<
 
-    gcm.cache/liburing.gcm: src/base/modules/liburing.ixx
-    \t@$(ECHO) Precompiling module $@
-    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
-
-    gcm.cache/libpthread.gcm: src/base/modules/libpthread.ixx
-    \t@$(ECHO) Precompiling module $@
-    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c $^
-                 
     gcm.cache/std.gcm:
-    \t@$(ECHO) Precompiling standard library $@
+    \t@$(ECHO) Compiling standard library module $@
     \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c bits/std.cc
 
     gcm.cache/std.compat.gcm: gcm.cache/std.gcm
-    \t@$(ECHO) Precompiling standard library $@
-    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c bits/std.compat.cc                 
-
+    \t@$(ECHO) Compiling standard compat library module $@
+    \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c bits/std.compat.cc
     .PHONY: make
     make:
     \tpython3 make/makefile.py | tee Makefile 2>&1
