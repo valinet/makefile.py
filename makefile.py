@@ -417,6 +417,15 @@ if __name__ == "__main__":
     _proj_compiledon = datetime.now().astimezone().replace(microsecond=0).isoformat()
     _proj_hostname = subprocess.check_output("hostname", shell=True, text=True).strip()
 
+    cflags = f" -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\\"{_proj_repo}\\\" -D_PROJ_COMMIT=\\\"{_proj_commit}\\\" -D_PROJ_COMPILEDON=\\\"{_proj_compiledon}\\\" -D_PROJ_HOSTNAME=\\\"{_proj_hostname}\\\"" \
+             f" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -O{args.optimization}" \
+             f" -Wall -Wextra -Werror -Wno-psabi" \
+             f" -fno-PIE -fno-omit-frame-pointer -fstack-protector-strong" \
+             f" -pedantic -fdiagnostics-color=always -Wl,--gc-sections"
+    cxxflags = f"-std={args.std}{cflags} -fno-exceptions -fno-rtti -Werror=unused-parameter -ffunction-sections -fdata-sections -fmodules"
+    ldflags = f"-L../../../build/software/target/usr/lib -lwebsockets -luring-ffi gcm.cache/fmt.gcm.o"
+    cflags = f"-std={args.cstd}{cflags}"
+
     # Print the normal Makefile pre-amble - setting of tool names, flags, etc.
     # The default target is 'all', which is a list of all linkable executables.
     # Also provides a 'clean' target which removes the build directory.
@@ -426,9 +435,9 @@ if __name__ == "__main__":
     CC = ../../../build/software/host/bin/arm-none-linux-gnueabihf-gcc
     CXX =../../../build/software/host/bin/arm-none-linux-gnueabihf-g++
     CCH ?= cch/build/cch
-    CFLAGS = -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\"{_proj_repo}\\" -D_PROJ_COMMIT=\\"{_proj_commit}\\" -D_PROJ_COMPILEDON=\\"{_proj_compiledon}\\" -D_PROJ_HOSTNAME=\\"{_proj_hostname}\\" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.cstd} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fno-PIE -fno-omit-frame-pointer -pedantic -fdiagnostics-color=always -Wl,--gc-sections
-    CXXFLAGS = -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64 -D_PROJ_REPO=\\"{_proj_repo}\\" -D_PROJ_COMMIT=\\"{_proj_commit}\\" -D_PROJ_COMPILEDON=\\"{_proj_compiledon}\\" -D_PROJ_HOSTNAME=\\"{_proj_hostname}\\" -march=armv7-a -marm -mfpu=neon -mfloat-abi=hard -std={args.std} -O{args.optimization} -Wall -Wextra -Werror -Wno-psabi -fno-PIE -fno-omit-frame-pointer -pedantic -fdiagnostics-color=always -Wl,--gc-sections -fno-exceptions -fno-rtti -Werror=unused-parameter -ffunction-sections -fdata-sections -fmodules
-    LDFLAGS = -L../../../build/software/target/usr/lib -lwebsockets -luring-ffi gcm.cache/fmt.gcm.o
+    CFLAGS = {cflags}
+    CXXFLAGS = {cxxflags}
+    LDFLAGS = {ldflags}
 
     _mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
     I := $(patsubst %/,%,$(dir $(_mkfile_path)))
