@@ -458,10 +458,13 @@ if __name__ == "__main__":
     FORCE: ;
     
     .PHONY: clean
-    clean:
+    clean: ## clear all build artifacts
     \trm -rf {args.build_root}
     \trm -rf gcm.cache
     \trm -rf cch/build
+
+    help: # with thanks to Ben Rady and Jeremy Rifkin ## displays this information
+    \t@grep -E '^[0-9a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {{FS = ":.*?## "}}; {{printf "\\033[36m%-20s\\033[0m %s\\n", $$1, $$2}}'
     """))
 
     files = []
@@ -567,17 +570,21 @@ if __name__ == "__main__":
     gcm.cache/std.compat.gcm: gcm.cache/std.gcm
     \t@$(ECHO) Compiling standard compat library module $@
     \t@$(CXX) $(CXXFLAGS) -fsearch-include-path -fmodule-only -c bits/std.compat.cc
+    
     .PHONY: make
-    make:
+    make: ## regenerate this makefile using makefile.py
     \tpython3 make/makefile.py | tee Makefile 2>&1
 
-    docs: Doxyfile
+    guard: ## generate a unique header guard identifier
+    \t@echo "zguard_`(uuidgen | tr -d '-')`"
+                 
+    docs: Doxyfile ## generate documentation (requires doxygen)
     \tdoxygen Doxyfile
 
-    emulate: build/{defines['MAKE_EXECUTABLE']}
+    emulate: build/{defines['MAKE_EXECUTABLE']} ## run executable in armhf emulator (requires qemu-arm-static)
     \tqemu-arm-static -L ../../../build/software/host/arm-none-linux-gnueabihf/sysroot build/{defines['MAKE_EXECUTABLE']}
 
-    deploy: build/{defines['MAKE_EXECUTABLE']}
+    deploy: build/{defines['MAKE_EXECUTABLE']} ## deploy executable to target board over the network (using the IP specified in config.h)
     \tssh root@{defines['MAKE_DEPLOY_IP']} killall {defines['MAKE_EXECUTABLE']} gdbserver || true 2>&1
     \tscp build/{defines['MAKE_EXECUTABLE']} root@{defines['MAKE_DEPLOY_IP']}:/root/{defines['MAKE_EXECUTABLE']}
 
@@ -587,7 +594,7 @@ if __name__ == "__main__":
     \tsystemd-run --user --unit=vscode_remote_gdbserver /bin/bash -c "ssh -L20001:127.0.0.1:20001 root@{defines['MAKE_DEPLOY_IP']} 'gdbserver :20001 /root/{defines['MAKE_EXECUTABLE']}'"
     \twt.exe ssh root@{defines['MAKE_DEPLOY_IP']} "pidof {defines['MAKE_EXECUTABLE']} | xargs -I {{}} cat /proc/{{}}/fd/1"
     
-    debug: deploy
+    debug: deploy ## debugs program on target board
     \tssh root@{defines['MAKE_DEPLOY_IP']} "gdbserver :20001 /root/{defines['MAKE_EXECUTABLE']}" &
     \tsleep 1
     \t../../../build/software/host/bin/arm-none-linux-gnueabihf-gdb -ex "file build/{defines['MAKE_EXECUTABLE']}" -ex "target remote {defines['MAKE_DEPLOY_IP']}:20001"
@@ -600,7 +607,7 @@ if __name__ == "__main__":
     \tmkdir -p {build_directories}
 
     .PHONY: all
-    all: {executables}
+    all: {executables} ## build program based on configuration in config.h
     \t@{{ \\
     \t    end=$$(date +%s%N); \\
     \t    diff_ns=$$((end - $(BUILD_START))); \\
